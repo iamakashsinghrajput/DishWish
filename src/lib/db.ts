@@ -1,3 +1,4 @@
+// src/lib/db.ts
 import mongoose from 'mongoose';
 
 const MONGO_URI = process.env.MONGO_URI;
@@ -26,7 +27,6 @@ if (!cached) {
 
 async function dbConnect(): Promise<typeof mongoose> {
   if (cached.conn) {
-    console.log('Using cached database connection');
     return cached.conn;
   }
 
@@ -35,25 +35,21 @@ async function dbConnect(): Promise<typeof mongoose> {
       bufferCommands: false,
     };
 
-    console.log('Creating new database connection promise');
     cached.promise = mongoose.connect(MONGO_URI!, opts).then((mongooseInstance) => {
-      console.log('Database connected successfully');
       return mongooseInstance;
     }).catch(err => {
-      console.error('Database connection error:', err);
-      cached.promise = null; 
+      cached.promise = null;
       throw err;
     });
   }
 
   try {
-    console.log('Awaiting database connection promise');
     cached.conn = await cached.promise;
   } catch (e) {
     cached.promise = null;
     throw e;
   }
-  
+
   return cached.conn!;
 }
 

@@ -1,11 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-
 import { NextResponse } from 'next/server';
 import { getServerSession } from "next-auth/next";
-import { authOptions } from '@/lib/authOptions';
+import { authOptions } from "@/lib/authOptions"
 import dbConnect from '@/lib/db';
-import RecipeModel, { IRecipe } from '@/models/Recipe';
-import { Types } from 'mongoose';
+import RecipeModel, { IRecipe} from '@/models/Recipe'; // Ensure IIngredient is exported
+import mongoose from 'mongoose';
 import OpenAI from 'openai';
 
 const openai = new OpenAI({
@@ -22,74 +21,63 @@ interface PromptData {
 }
 
 async function callOpenAIService(promptData: PromptData): Promise<string> {
-  const systemMessage = `You are DishWish AI, a helpful culinary assistant that generates creative and practical recipes.
-  The user will provide details like ingredients, dietary restrictions, preferred cuisine, skill level, meal type, and specific requests.
-  Your goal is to generate a complete recipe based on these inputs.
+  const systemMessage = `You are DishWish AI. Generate a recipe based on user inputs.
+  Output ONLY the recipe content. Adhere STRICTLY to the following format. Each section MUST start with its exact marker.
 
-  The recipe MUST include the following clearly marked sections:
-  - Recipe Name: (A catchy and descriptive name)
-  - Description: (A brief, enticing overview of the dish)
-  - Prep Time: (e.g., "15 minutes")
-  - Cook Time: (e.g., "30 minutes")
-  - Servings: (e.g., "4 servings")
-  - Cuisine: (e.g., "Italian", "Mexican", "As per request or AI suggestion")
-  - Ingredients: (List each ingredient on a new line, starting with a hyphen '-', ideally with quantity and unit, e.g., "- 1 cup All-purpose Flour", "- 2 large Eggs", "- 1 tsp Vanilla Extract")
-  - Instructions: (Provide clear, step-by-step cooking instructions. Number each step, e.g., "1. Preheat oven...")
-  - Notes: (Optional: any tips, variations, or storage instructions)
+  Recipe Name: [The Recipe Name]
 
-  Prioritize using the provided ingredients. If ingredients are scarce, suggest simple additions or be creative.
-  Adhere strictly to dietary restrictions.
-  If cuisine is specified, try to match it. If not, be creative or suggest a suitable one.
-  Tailor complexity to the user's skill level.
-  Be encouraging and friendly in your tone.
-  If the request is vague, make reasonable assumptions and state them if necessary.
-  Output ONLY the recipe structure defined above. Do not include any conversational fluff, greetings, or closing remarks before or after the recipe content.
+  Description: [A concise, enticing description of the dish. Max 2-3 sentences.]
+
+  Prep Time: [e.g., 15 minutes]
+
+  Cook Time: [e.g., 30 minutes]
+
+  Servings: [e.g., 4 servings]
+
+  Cuisine: [e.g., Italian. If unknown, state "Various" or suggest one.]
+
+  Ingredients:
+  - [Quantity] [Unit (optional)] [Ingredient Name] | [Optional notes like "chopped", "melted"]
+  - [Quantity] [Unit (optional)] [Ingredient Name] | [Optional notes]
+  (Each ingredient on a new line, starting with "- ". Use a pipe "|" to separate item from notes if notes exist.)
+
+  Instructions:
+  1. [First step of the instructions...]
+  2. [Second step...]
+  (Number each step, followed by a period and space: "1. ")
+
+  Notes:
+  [Optional tips, variations, or storage instructions. If none, write "Notes: None" or omit the entire Notes section.]
+
+  DO NOT include any text before "Recipe Name:" or after the "Notes:" section (or the last instruction if no notes).
+  Be very precise with the section markers.
   `;
 
-  let userPrompt = "Please generate a recipe with the following details:\n";
-  if (promptData.ingredients.length > 0) {
-    userPrompt += `- Ingredients I have: ${promptData.ingredients.join(', ')}\n`;
-  } else {
-    userPrompt += `- I don't have specific ingredients in mind, please suggest something based on other preferences.\n`;
-  }
-  if (promptData.dietaryRestrictions.length > 0) {
-    userPrompt += `- Dietary Restrictions: ${promptData.dietaryRestrictions.join(', ')}\n`;
-  }
-  if (promptData.cuisine) {
-    userPrompt += `- Preferred Cuisine: ${promptData.cuisine}\n`;
-  }
-  if (promptData.skillLevel) {
-    userPrompt += `- My Cooking Skill Level: ${promptData.skillLevel}\n`;
-  }
-  if (promptData.mealType) {
-    userPrompt += `- Meal Type: ${promptData.mealType}\n`;
-  }
-  if (promptData.specificRequests) {
-    userPrompt += `- Specific Requests: ${promptData.specificRequests}\n`;
-  }
+  let userPrompt = "Generate a recipe based on these details:\n";
+  userPrompt += `Ingredients Provided: ${promptData.ingredients.length > 0 ? promptData.ingredients.join(', ') : 'None, suggest based on other preferences.'}\n`;
+  if (promptData.dietaryRestrictions.length > 0) userPrompt += `Dietary Restrictions: ${promptData.dietaryRestrictions.join(', ')}\n`;
+  if (promptData.cuisine) userPrompt += `Preferred Cuisine: ${promptData.cuisine}\n`;
+  if (promptData.skillLevel) userPrompt += `Cooking Skill Level: ${promptData.skillLevel}\n`;
+  if (promptData.mealType) userPrompt += `Meal Type: ${promptData.mealType}\n`;
+  if (promptData.specificRequests) userPrompt += `Specific Requests: ${promptData.specificRequests}\n`;
 
   try {
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-4o-mini", // Or your preferred model
       messages: [
         { role: "system", content: systemMessage },
         { role: "user", content: userPrompt }
       ],
-      temperature: 0.6,
+      temperature: 0.4, // Even lower for stricter adherence to format
+      // max_tokens: 1800, // Adjust if needed
     });
-
     const aiResponse = completion.choices[0]?.message?.content;
-
-    if (!aiResponse) {
-      throw new Error("AI did not return any recipe content.");
-    }
+    if (!aiResponse) throw new Error("AI did not return any recipe content.");
     return aiResponse.trim();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (error: any) {
     console.error("Error calling OpenAI service:", error.message);
-    if (error instanceof OpenAI.APIError) {
-        console.error("OpenAI SDK APIError Status:", error.status);
-        console.error("OpenAI SDK APIError Error Object:", error.error);
-    }
+    if (error instanceof OpenAI.APIError) console.error("OpenAI SDK APIError Details:", error);
     throw new Error(`Failed to get a response from AI service: ${error.message}`);
   }
 }
@@ -99,102 +87,123 @@ function parseAIRecipeText(
   promptData: PromptData
 ): Partial<Omit<IRecipe, '_id' | 'userId' | 'createdAt' | 'updatedAt'>> {
   const recipe: Partial<Omit<IRecipe, '_id' | 'userId' | 'createdAt' | 'updatedAt'>> = {
-    name: "AI Generated Recipe (Parsing Pending)",
-    ingredients: [],
-    instructions: [],
     source: 'ai',
     aiPrompt: promptData,
     tags: [],
+    ingredients: [],
+    instructions: [],
   };
 
-  const lines = aiResponseText.split('\n').map(line => line.trim());
-  let currentSection: 'description' | 'prep' | 'cook' | 'servings' | 'cuisine' | 'ingredients' | 'instructions' | 'notes' | null = null;
+  const sectionsMap = {
+    "Recipe Name:": "name",
+    "Description:": "description",
+    "Prep Time:": "prepTime",
+    "Cook Time:": "cookTime",
+    "Servings:": "servings",
+    "Cuisine:": "cuisine",
+    "Ingredients:": "ingredients",
+    "Instructions:": "instructions",
+    "Notes:": "notes",
+  } as const; // Make keys specific
+
+  type SectionKey = keyof typeof sectionsMap;
+  type RecipeFieldKey = typeof sectionsMap[SectionKey];
+
+  const lines = aiResponseText.split('\n');
+  let currentSection: RecipeFieldKey | null = null;
+  let collectingMultiLine = false;
 
   for (const line of lines) {
-    if (!line) continue;
+    const trimmedLine = line.trim();
+    let isSectionMarker = false;
 
-    const lowerLine = line.toLowerCase();
-
-    if (lowerLine.startsWith("recipe name:")) {
-      recipe.name = line.substring("recipe name:".length).trim();
-      currentSection = null; continue;
-    }
-    if (lowerLine.startsWith("description:")) {
-      recipe.description = line.substring("description:".length).trim();
-      currentSection = 'description'; continue;
-    }
-    if (lowerLine.startsWith("prep time:")) {
-      recipe.prepTime = line.substring("prep time:".length).trim();
-      currentSection = null; continue;
-    }
-    if (lowerLine.startsWith("cook time:")) {
-      recipe.cookTime = line.substring("cook time:".length).trim();
-      currentSection = null; continue;
-    }
-    if (lowerLine.startsWith("servings:")) {
-      recipe.servings = parseInt(line.substring("servings:".length).trim().split(' ')[0], 10) || undefined;
-      currentSection = null; continue;
-    }
-    if (lowerLine.startsWith("cuisine:")) {
-      recipe.cuisine = line.substring("cuisine:".length).trim();
-      if(recipe.cuisine && recipe.tags) recipe.tags.push(recipe.cuisine.toLowerCase());
-      currentSection = null; continue;
-    }
-    if (lowerLine.startsWith("ingredients:")) {
-      currentSection = 'ingredients'; continue;
-    }
-    if (lowerLine.startsWith("instructions:") || lowerLine.startsWith("steps:")) {
-      currentSection = 'instructions'; continue;
-    }
-    if (lowerLine.startsWith("notes:")) {
-      recipe.notes = line.substring("notes:".length).trim();
-      currentSection = 'notes'; continue;
-    }
-
-    if (currentSection === 'description') recipe.description = (recipe.description ? recipe.description + " " : "") + line;
-    else if (currentSection === 'notes') recipe.notes = (recipe.notes ? recipe.notes + " " : "") + line;
-    else if (currentSection === 'ingredients' && line.startsWith('-')) {
-      const ingredientText = line.substring(1).trim();
-      const parts = ingredientText.match(/^([\d./\s\S]+?)\s+(.+)$/);
-      if (parts && parts[1] && parts[2]) {
-        const qtyUnitMatch = parts[1].trim().match(/^([\d./-]+)\s*([a-zA-Zµ]+)?$/);
-        if (qtyUnitMatch) {
-            recipe.ingredients!.push({
-                quantity: qtyUnitMatch[1]?.trim() || "1",
-                unit: qtyUnitMatch[2]?.trim() || undefined,
-                item: parts[2].trim(),
-            });
+    for (const marker of Object.keys(sectionsMap) as SectionKey[]) {
+      if (trimmedLine.toLowerCase().startsWith(marker.toLowerCase())) {
+        currentSection = sectionsMap[marker];
+        const content = trimmedLine.substring(marker.length).trim();
+        if (currentSection !== 'ingredients' && currentSection !== 'instructions' && currentSection !== 'description' && currentSection !== 'notes') {
+          (recipe as any)[currentSection] = content;
+          collectingMultiLine = false;
         } else {
-             recipe.ingredients!.push({ quantity: parts[1].trim(), item: parts[2].trim() });
+            if (content) { // If there's content on the marker line itself for description/notes
+                 (recipe as any)[currentSection] = content;
+            } else { // Initialize if empty, ready for next lines
+                 (recipe as any)[currentSection] = (currentSection === 'ingredients' || currentSection === 'instructions') ? [] : '';
+            }
+            collectingMultiLine = true;
         }
-      } else {
-        recipe.ingredients!.push({ quantity: "As needed", item: ingredientText });
+        isSectionMarker = true;
+        break;
       }
-    } else if (currentSection === 'instructions' && /^\d+\.\s*/.test(line)) {
-      recipe.instructions!.push(line.replace(/^\d+\.\s*/, '').trim());
-    } else if (currentSection === 'instructions' && recipe.instructions!.length > 0 && line) {
-      recipe.instructions![recipe.instructions!.length - 1] += ` ${line}`;
+    }
+
+    if (!isSectionMarker && currentSection && trimmedLine) {
+      if (currentSection === 'ingredients' && trimmedLine.startsWith('-')) {
+        const itemText = trimmedLine.substring(1).trim();
+        const [itemPart, notesPart] = itemText.split('|').map(s => s.trim()); // Split by pipe for notes
+        
+        // Regex to capture: (1) quantity, (2) unit (optional), (3) item name
+        const ingParts = itemPart.match(/^([\d\s./-]+(?:to taste|as needed)?)?\s*([a-zA-Zµ]+(?:\(s\))?)?\s*(.+)$/i);
+
+        if (ingParts && ingParts[3]) {
+          recipe.ingredients!.push({
+            quantity: ingParts[1]?.trim() || "1",
+            unit: ingParts[2]?.trim() || undefined,
+            item: ingParts[3].trim(),
+            notes: notesPart || undefined,
+          });
+        } else {
+          recipe.ingredients!.push({ quantity: "As desired", item: itemPart, notes: notesPart || undefined });
+        }
+      } else if (currentSection === 'instructions' && /^\d+\.\s*/.test(trimmedLine)) {
+        recipe.instructions!.push(trimmedLine.replace(/^\d+\.\s*/, '').trim());
+      } else if ((currentSection === 'description' || currentSection === 'notes') && collectingMultiLine) {
+        (recipe as any)[currentSection] = ((recipe as any)[currentSection] ? (recipe as any)[currentSection] + "\n" : "") + trimmedLine;
+      }
+    } else if (!isSectionMarker && !trimmedLine) {
+        // If it's an empty line, it might signal the end of a multiline section like description or notes
+        if (currentSection === 'description' || currentSection === 'notes') {
+            collectingMultiLine = false; 
+        }
     }
   }
 
-  if (promptData.dietaryRestrictions && promptData.dietaryRestrictions.length > 0 && recipe.tags) {
-    recipe.tags = [...recipe.tags, ...promptData.dietaryRestrictions.map(d => d.toLowerCase())];
-  }
-  if (promptData.mealType && recipe.tags) {
-    recipe.tags.push(promptData.mealType.toLowerCase());
-  }
-  if (recipe.tags) {
-    recipe.tags = [...new Set(recipe.tags.filter(tag => tag))];
+  if (recipe.cuisine) recipe.tags!.push(recipe.cuisine.toLowerCase());
+  if (promptData.dietaryRestrictions.length > 0) recipe.tags!.push(...promptData.dietaryRestrictions.map(d => d.toLowerCase()));
+  if (promptData.mealType) recipe.tags!.push(promptData.mealType.toLowerCase());
+  recipe.tags = [...new Set(recipe.tags!.filter(tag => tag && tag.trim() !== ''))];
+
+  if (typeof recipe.servings === 'string') {
+    const servingsStr = recipe.servings as string;
+    const servingsMatch = servingsStr.match(/\d+/);
+    recipe.servings = servingsMatch ? parseInt(servingsMatch[0], 10) : undefined;
+  } else if (typeof recipe.servings === 'number') {
+    // keep as is
+  } else {
+    recipe.servings = undefined;
   }
 
-  if (recipe.name === "AI Generated Recipe (Parsing Pending)" && recipe.description) {
-    recipe.name = recipe.description.split('.')[0].substring(0, 60) + "...";
+  if (!recipe.name || recipe.name.trim() === "") recipe.name = "Untitled AI Recipe";
+  if (!recipe.instructions || recipe.instructions.length === 0) {
+      // If instructions are missing, but raw text has content, put it as a note
+      if (aiResponseText.length > 100 && !recipe.notes) { // Heuristic
+          recipe.notes = "AI response might contain instructions, but they could not be parsed correctly. Please review raw output.";
+      }
+      // And ensure instructions is an empty array not undefined
+      recipe.instructions = [];
   }
-  if (!recipe.name) recipe.name = "Untitled AI Recipe";
+   if (!recipe.ingredients || recipe.ingredients.length === 0) {
+       if (aiResponseText.length > 100 && !recipe.notes) {
+           recipe.notes = (recipe.notes ? recipe.notes + "\n" : "") + "AI response might contain ingredients, but they could not be parsed correctly. Please review raw output.";
+       }
+       recipe.ingredients = [];
+   }
+
 
   return recipe;
 }
 
+// ... (POST handler remains the same)
 export async function POST(request: Request) {
   const session = await getServerSession(authOptions);
   if (!session || !session.user?.id) {
@@ -234,19 +243,15 @@ export async function POST(request: Request) {
     const aiResponseText = await callOpenAIService(promptData);
     const parsedRecipeData = parseAIRecipeText(aiResponseText, promptData);
 
-    // **THE FIX IS HERE:**
-    // Ensure session.user.id is correctly converted to a Mongoose ObjectId
-    // Mongoose can often handle string conversion, but being explicit is safer.
-    // First, validate that session.user.id is a valid string for an ObjectId
-    if (!session.user.id || !Types.ObjectId.isValid(session.user.id)) {
+    if (!mongoose.Types.ObjectId.isValid(session.user.id)) {
         console.error("Invalid session user ID for recipe creation:", session.user.id);
         return NextResponse.json({ message: 'Invalid user session data.' }, { status: 400 });
     }
-    const userIdAsObjectId = new Types.ObjectId(session.user.id);
+    const userIdAsObjectId = new mongoose.Types.ObjectId(session.user.id);
 
     const newRecipe = new RecipeModel({
       ...parsedRecipeData,
-      userId: userIdAsObjectId, // Use the explicitly converted ObjectId
+      userId: userIdAsObjectId,
     });
 
     const savedRecipe = await newRecipe.save();
@@ -269,17 +274,15 @@ export async function POST(request: Request) {
         statusCode = error.status || 500;
     } else if (error.message?.includes('Failed to get a response from AI service')) {
         errorMessage = error.message;
-    } else if (error.name === 'ValidationError' || error.message?.includes('validation failed')) { // Mongoose validation error
-        errorMessage = 'Recipe data validation failed. Please check the generated content.';
+    } else if (error.name === 'ValidationError' || error.message?.includes('validation failed')) {
+        errorMessage = 'Recipe data validation failed. The AI-generated content might not meet expected structure.';
         statusCode = 400;
         console.error('Mongoose Validation Error details:', error.errors || error);
-    } else if (error.message?.includes("input must be a 24 character hex string")) { // Specific error message
+    } else if (error.message?.includes("input must be a 24 character hex string")) {
         errorMessage = "There was an issue with associating the recipe with your user account. Please try again.";
-        statusCode = 500; // Internal server error, likely a bug in how ID is handled
+        statusCode = 500;
         console.error("ObjectId conversion issue suspect. Original error:", error);
     }
-
-
-    return NextResponse.json({ message: errorMessage }, { status: statusCode });
+    return NextResponse.json({ message: errorMessage,  detailsForDev: error.message }, { status: statusCode });
   }
 }

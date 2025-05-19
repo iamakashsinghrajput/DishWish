@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 // src/app/session/new/page.tsx
 "use client";
@@ -67,7 +68,7 @@ function LoginForm() {
       setCanResendOtp(true);
     }
     return () => clearTimeout(cooldownTimer);
-  }, [otpResendCooldown, loginMode]);
+  }, [otpResendCooldown, loginMode, otpTimeLeft]);
 
   const formatTime = (ms: number) => {
     const minutes = Math.floor(ms / 60000);
