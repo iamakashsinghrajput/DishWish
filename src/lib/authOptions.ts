@@ -1,21 +1,36 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { NextAuthOptions, DefaultSession } from 'next-auth';
+import { NextAuthOptions, DefaultSession, Profile, Account, Session } from 'next-auth';
+import { JWT } from 'next-auth/jwt';
 import GoogleProvider from 'next-auth/providers/google';
 import CredentialsProvider from 'next-auth/providers/credentials';
-import dbConnect from '@/lib/db';
-import UserModel from '@/models/User';
+import dbConnect from './db';
+import UserModel, { IUser } from '../models/User';
+import bcrypt from 'bcryptjs';
+import mongoose from 'mongoose';
 
+// Augment NextAuth types
 declare module 'next-auth' {
   interface Session {
     user: {
       id: string;
-      provider: string;
-      emailVerified?: Date;
+      provider?: string;
+      emailVerified?: Date | string;
     } & DefaultSession['user'];
   }
+
   interface User {
     id: string;
+    firstName?: string;
+    lastName?: string;
     emailVerified?: Date;
+  }
+}
+
+declare module 'next-auth/jwt' {
+  interface JWT {
+    id: string;
+    provider?: string;
+    emailVerified?: Date | string;
   }
 }
 
@@ -33,30 +48,47 @@ export const authOptions: NextAuthOptions = {
         otp: { label: "OTP", type: "text" },
         loginType: { label: "Login Type", type: "text" }
       },
-      async authorize(credentials) {
+      async authorize(credentials): Promise<any | null> {
         await dbConnect();
         if (!credentials?.email) return null;
 
-        const user = await UserModel.findOne({ email: credentials.email.toLowerCase() }) as unknown;
-        if (!user) return null;
+        const dbUser: IUser | null = await UserModel.findOne({ email: credentials.email.toLowerCase() });
+        if (!dbUser) return null;
 
         if (credentials.loginType === 'otp') {
-          if ((user as any).otp === credentials.otp && (user as any).otpExpires && (user as any).otpExpires > new Date()) {
-            (user as any).otp = undefined;
-            (user as any).otpExpires = undefined;
-            if (!(user as any).emailVerified) (user as any).emailVerified = new Date();
-            await (user as any).save();
-            return { id: (user as any)._id.toString(), email: (user as any).email, name: `${(user as any).firstName} ${(user as any).lastName}`, image: (user as any).image, emailVerified: (user as any).emailVerified };
+          if (!dbUser.otp || !dbUser.otpExpires) return null;
+
+          const isOtpValid = await bcrypt.compare(credentials.otp, dbUser.otp);
+
+          if (isOtpValid && dbUser.otpExpires > new Date()) {
+            dbUser.otp = undefined;
+            dbUser.otpExpires = undefined;
+            if (!dbUser.emailVerified) dbUser.emailVerified = new Date();
+            await dbUser.save();
+            return {
+              id: (dbUser._id as mongoose.Types.ObjectId).toString(),
+              email: dbUser.email,
+              name: `${dbUser.firstName || ''} ${dbUser.lastName || ''}`.trim() || dbUser.email,
+              image: dbUser.image,
+              emailVerified: dbUser.emailVerified,
+              firstName: dbUser.firstName,
+              lastName: dbUser.lastName,
+            };
           }
           return null;
         } else {
-          if (!(user as any).password) return null;
-          const isPasswordMatch = await (user as any).comparePassword(credentials.password);
+          if (!dbUser.password) return null;
+          const isPasswordMatch = await dbUser.comparePassword(credentials.password);
           if (isPasswordMatch) {
-            if (!(user as any).emailVerified) {
-              // You can add logic here if needed
-            }
-            return { id: (user as any)._id.toString(), email: (user as any).email, name: `${(user as any).firstName} ${(user as any).lastName}`, image: (user as any).image, emailVerified: (user as any).emailVerified };
+            return {
+              id: (dbUser._id as mongoose.Types.ObjectId).toString(),
+              email: dbUser.email,
+              name: `${dbUser.firstName || ''} ${dbUser.lastName || ''}`.trim() || dbUser.email,
+              image: dbUser.image,
+              emailVerified: dbUser.emailVerified,
+              firstName: dbUser.firstName,
+              lastName: dbUser.lastName,
+            };
           }
           return null;
         }
@@ -67,54 +99,100 @@ export const authOptions: NextAuthOptions = {
     strategy: 'jwt',
   },
   callbacks: {
-    async jwt({ token, user, account }) {
-      if (account && user) {
-        token.id = user.id;
-        token.provider = account.provider;
-      }
-      if (user && 'emailVerified' in user) {
-        token.emailVerified = (user as { emailVerified?: Date }).emailVerified;
-      }
-      return token;
-    },
-    async session({ session, token }) {
-      session.user.id = token.id as string;
-      session.user.provider = token.provider as string;
-      session.user.emailVerified = token.emailVerified as Date;
-      return session;
-    },
-    async signIn({ user, account, profile }) {
+    async signIn({ user, account, profile }: { user: any; account: Account | null; profile?: Profile }): Promise<boolean | string> {
       await dbConnect();
       if (account?.provider === 'google') {
-        const existingUser = await UserModel.findOne({ email: user.email!.toLowerCase() });
-        if (existingUser) {
-          if (!existingUser.provider || existingUser.provider !== 'google') {
-            existingUser.provider = 'google';
-            if (profile && 'given_name' in profile && profile.given_name) existingUser.firstName = profile.given_name as string;
-            if (profile && 'family_name' in profile && profile.family_name) existingUser.lastName = profile.family_name as string;
-            if (user.image && existingUser.image !== user.image) existingUser.image = user.image; // Update image if changed
-            existingUser.emailVerified = new Date();
-            await existingUser.save();
-          }
-          return true;
-        } else {
-          let firstName = user.name?.split(' ')[0] || 'User';
-          let lastName = user.name?.split(' ').slice(1).join(' ');
-          if (profile && 'given_name' in profile && profile.given_name) firstName = profile.given_name as string;
-          if (profile && 'family_name' in profile && profile.family_name) lastName = profile.family_name as string;
+        const dbUser = await UserModel.findOne({ email: user.email.toLowerCase() });
 
-          await UserModel.create({
-            email: user.email!.toLowerCase(),
+        if (dbUser) {
+          let updated = false;
+          if (!dbUser.provider || dbUser.provider !== 'google') {
+            dbUser.provider = 'google';
+            updated = true;
+          }
+          const googleFirstName = (profile as any)?.given_name;
+          const googleLastName = (profile as any)?.family_name;
+
+          if (googleFirstName && dbUser.firstName !== googleFirstName) {
+            dbUser.firstName = googleFirstName;
+            updated = true;
+          }
+          if (googleLastName && dbUser.lastName !== googleLastName) {
+            dbUser.lastName = googleLastName;
+            updated = true;
+          } else if (googleFirstName && !dbUser.lastName && user.name && user.name !== googleFirstName) {
+             const nameParts = user.name.split(' ');
+             if (nameParts.length > 1 && nameParts[0] === googleFirstName) {
+                 dbUser.lastName = nameParts.slice(1).join(' ');
+                 updated = true;
+             }
+          }
+          if (user.image && dbUser.image !== user.image) {
+            dbUser.image = user.image;
+            updated = true;
+          }
+          if (!dbUser.emailVerified) {
+            dbUser.emailVerified = new Date();
+            updated = true;
+          }
+          if(updated) await dbUser.save();
+          user.id = (dbUser._id as mongoose.Types.ObjectId).toString();
+          user.emailVerified = dbUser.emailVerified;
+          user.firstName = dbUser.firstName;
+          user.lastName = dbUser.lastName;
+        } else {
+          const firstName = (profile as any)?.given_name || user.name?.split(' ')[0] || 'User';
+          const lastName = (profile as any)?.family_name || user.name?.split(' ').slice(1).join(' ') || undefined;
+
+          const newDbUser = await UserModel.create({
+            email: user.email.toLowerCase(),
             firstName: firstName,
-            lastName: lastName || undefined,
+            lastName: lastName,
             image: user.image,
             provider: 'google',
             emailVerified: new Date(),
           });
-          return true;
+          user.id = (newDbUser._id as mongoose.Types.ObjectId).toString();
+          user.emailVerified = newDbUser.emailVerified;
+          user.firstName = newDbUser.firstName;
+          user.lastName = newDbUser.lastName;
+        }
+      } else if (account?.provider === 'credentials') {
+        if (!user.id || !mongoose.Types.ObjectId.isValid(user.id)) {
+            console.error("Credentials signIn: user.id from authorize is not a valid MongoDB ObjectId.", user);
+            const dbUserCheck = await UserModel.findOne({email: user.email?.toLowerCase()});
+            if (dbUserCheck) {
+                user.id = (dbUserCheck._id as mongoose.Types.ObjectId).toString();
+                user.emailVerified = dbUserCheck.emailVerified;
+                user.firstName = dbUserCheck.firstName;
+                user.lastName = dbUserCheck.lastName;
+            } else {
+                console.error("Credentials signIn: Could not re-verify user from DB during signIn callback.");
+                return false;
+            }
         }
       }
       return true;
+    },
+    async jwt({ token, user, account }: { token: JWT; user?: any; account?: Account | null; profile?: Profile }): Promise<JWT> {
+      if (user) {
+        token.id = user.id;
+        if (account) {
+          token.provider = account.provider;
+        }
+        if (user.emailVerified) {
+          token.emailVerified = user.emailVerified instanceof Date ? user.emailVerified.toISOString() : user.emailVerified;
+        }
+      }
+      return token;
+    },
+    async session({ session, token }: { session: Session; token: JWT; user: any }): Promise<Session> {
+      session.user.id = token.id;
+      session.user.provider = token.provider;
+      if (token.emailVerified) {
+        session.user.emailVerified = new Date(token.emailVerified as string);
+      }
+      return session;
     },
   },
   pages: {
