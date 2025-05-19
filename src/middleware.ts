@@ -31,6 +31,7 @@
 
 
 
+// src/middleware.ts
 import { getToken } from 'next-auth/jwt';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
@@ -38,42 +39,56 @@ import type { NextRequest } from 'next/server';
 export async function middleware(req: NextRequest) {
   const { pathname, search, origin } = req.nextUrl;
 
-  // Define paths that do not require authentication
   const publicPaths = [
-    '/',
-    '/session/new',
-    '/signup',
-    '/forgot-password',
-    '/reset-password',
+    '/',                     // Homepage
+    '/session/new',          // Login page
+    '/signup/new',           // Initial signup page
+    '/signup/verify-email-otp',// OTP verification for signup
+    '/signup/complete-profile',// Profile completion after OTP
+    '/signup/verify-email',  // Generic "check your email" page (if used)
+    '/forgot-password',      // Forgot password page
+    '/reset-password',       // Reset password page (accessed via token link)
     '/how-it-works',
     '/about',
+    '/contact',              // Assuming contact page is public
+    '/api/generate-recipe',
   ];
 
-  const isPublicPath = publicPaths.some(path => 
-    pathname === path || (path.endsWith('*') && pathname.startsWith(path.slice(0, -1)))
-  );
+  // API routes for authentication and public data
+  const publicApiPrefixes = [
+    '/api/auth/',            // All NextAuth routes (signin, callback, signout, session, etc.)
+    '/api/contact',          // Contact form submission API (if public)
+    // Add other public API prefixes if any
+  ];
 
-  // Allow requests to public paths and NextAuth API routes to pass through without token check
-  if (isPublicPath || pathname.startsWith('/api/auth')) {
+  // Check if the current path is one of the explicitly defined public paths
+  const isExplicitPublicPath = publicPaths.includes(pathname);
+
+  // Check if the current path starts with one of the public API prefixes
+  const isPublicApiRoute = publicApiPrefixes.some(prefix => pathname.startsWith(prefix));
+
+  if (isExplicitPublicPath || isPublicApiRoute) {
+    // console.log(`Middleware: Allowing public path or public API: ${pathname}`);
     return NextResponse.next();
   }
   
-  // For all other paths, check for a token
+  // For all other paths, check for an authentication token
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
 
   if (!token) {
-    // If no token, redirect to login page
-    // Preserve the original path for redirection after login
-    const loginUrl = new URL('/session/new', origin); // Use origin for base URL
+    // If no token and it's not a public path, redirect to login
+    const loginUrl = new URL('/session/new', origin);
     loginUrl.searchParams.set('callbackUrl', pathname + search);
-    console.log(`Middleware: No token, redirecting to ${loginUrl.toString()}`);
+    console.log(`Middleware: No token for protected path ${pathname}, redirecting to ${loginUrl.toString()}`);
     return NextResponse.redirect(loginUrl);
   }
 
   // If token exists, allow the request to proceed
+  // console.log(`Middleware: Token found for protected path ${pathname}, allowing.`);
   return NextResponse.next();
 }
 
+// Configuration for which paths the middleware should run on
 export const config = {
   matcher: [
     /*
@@ -81,12 +96,12 @@ export const config = {
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
-     * - /images/ (if you have a public images folder, adjust as needed or handle via publicPaths)
-     * - /public/ (if you serve other files directly from public, adjust)
+     * - Any other static assets in /public you want to exclude directly (e.g., /images/, /fonts/)
      *
-     * This matcher is broad. The logic inside the middleware then decides based on publicPaths.
-     * API routes starting with /api/ but NOT /api/auth/ will be caught by this and checked for a token.
+     * This broad matcher ensures the middleware logic above determines access.
      */
-    '/((?!_next/static|_next/image|favicon.ico).*)',
+    '/((?!_next/static|_next/image|favicon.ico|auth-graphic.svg).*)', 
+    // Added auth-graphic.svg to exclude it if it's in public root.
+    // Adjust if you have other top-level public assets not in a subfolder.
   ],
 };
