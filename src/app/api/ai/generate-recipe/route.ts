@@ -16,24 +16,24 @@ interface PromptData {
   dietaryRestrictions: string[];
   cuisine?: string;
   skillLevel?: string;
-  mealType?: string; 
-  specificRequests?: string; 
+  mealType?: string;
+  specificRequests?: string;
 }
 
 async function callOpenAIService(promptData: PromptData): Promise<string> {
   const systemMessage = `You are DishWish AI, a helpful culinary assistant that generates creative and practical recipes.
-  The user will provide a list of ingredients they have, dietary restrictions, preferred cuisine, skill level, meal type, and any specific requests.
+  The user will provide details like ingredients, dietary restrictions, preferred cuisine, skill level, meal type, and specific requests.
   Your goal is to generate a complete recipe based on these inputs.
 
-  The recipe should include the following clearly marked sections:
+  The recipe MUST include the following clearly marked sections:
   - Recipe Name: (A catchy and descriptive name)
   - Description: (A brief, enticing overview of the dish)
   - Prep Time: (e.g., "15 minutes")
   - Cook Time: (e.g., "30 minutes")
   - Servings: (e.g., "4 servings")
   - Cuisine: (e.g., "Italian", "Mexican", "As per request or AI suggestion")
-  - Ingredients: (List each ingredient on a new line, ideally with quantity and unit, e.g., "- 1 cup All-purpose Flour", "- 2 large Eggs", "- 1 tsp Vanilla Extract")
-  - Instructions: (Provide clear, step-by-step cooking instructions. Number each step.)
+  - Ingredients: (List each ingredient on a new line, starting with a hyphen '-', ideally with quantity and unit, e.g., "- 1 cup All-purpose Flour", "- 2 large Eggs", "- 1 tsp Vanilla Extract")
+  - Instructions: (Provide clear, step-by-step cooking instructions. Number each step, e.g., "1. Preheat oven...")
   - Notes: (Optional: any tips, variations, or storage instructions)
 
   Prioritize using the provided ingredients. If ingredients are scarce, suggest simple additions or be creative.
@@ -42,7 +42,7 @@ async function callOpenAIService(promptData: PromptData): Promise<string> {
   Tailor complexity to the user's skill level.
   Be encouraging and friendly in your tone.
   If the request is vague, make reasonable assumptions and state them if necessary.
-  Do not include any conversational fluff before or after the recipe itself. Output only the recipe structure defined above.
+  Output ONLY the recipe structure defined above. Do not include any conversational fluff, greetings, or closing remarks before or after the recipe content.
   `;
 
   let userPrompt = "Please generate a recipe with the following details:\n";
@@ -68,23 +68,38 @@ async function callOpenAIService(promptData: PromptData): Promise<string> {
   }
 
   try {
+    console.log("Sending request to OpenAI with model gpt-4o-mini...");
     const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo-0125",
+      model: "gpt-4o-mini",
       messages: [
         { role: "system", content: systemMessage },
         { role: "user", content: userPrompt }
       ],
-      temperature: 0.7,
+      temperature: 0.6,
+      // max_tokens: 1500,
     });
 
+    // console.log("OpenAI Raw Choice:", JSON.stringify(completion.choices[0], null, 2));
+
+
     const aiResponse = completion.choices[0]?.message?.content;
+
     if (!aiResponse) {
-      throw new Error("AI did not return a recipe content.");
+      console.error("OpenAI response content is null or undefined. Full completion:", JSON.stringify(completion, null, 2));
+      throw new Error("AI did not return any recipe content.");
     }
     return aiResponse.trim();
-  } catch (error) {
-    console.error("Error calling OpenAI service:", error);
-    throw new Error("Failed to get a response from AI service.");
+  } catch (error: any) {
+    console.error("Error calling OpenAI service:", error.message);
+    if (error.response) {
+        console.error("OpenAI API Error Response Data:", error.response.data);
+        console.error("OpenAI API Error Response Status:", error.response.status);
+    } else if (error instanceof OpenAI.APIError) {
+        console.error("OpenAI SDK APIError Status:", error.status);
+        console.error("OpenAI SDK APIError Headers:", error.headers);
+        console.error("OpenAI SDK APIError Error Object:", error.error);
+    }
+    throw new Error(`Failed to get a response from AI service: ${error.message}`);
   }
 }
 
@@ -93,6 +108,7 @@ function parseAIRecipeText(
   promptData: PromptData
 ): Partial<Omit<IRecipe, '_id' | 'userId' | 'createdAt' | 'updatedAt'>> {
   const recipe: Partial<Omit<IRecipe, '_id' | 'userId' | 'createdAt' | 'updatedAt'>> = {
+    name: "AI Generated Recipe (Parsing Pending)",
     ingredients: [],
     instructions: [],
     source: 'ai',
@@ -100,11 +116,12 @@ function parseAIRecipeText(
     tags: [],
   };
 
-  const lines = aiResponseText.split('\n').map(line => line.trim()).filter(line => line);
-
-  let currentSection: 'name' | 'description' | 'prep' | 'cook' | 'servings' | 'cuisine' | 'ingredients' | 'instructions' | 'notes' | null = null;
+  const lines = aiResponseText.split('\n').map(line => line.trim());
+  let currentSection: 'description' | 'prep' | 'cook' | 'servings' | 'cuisine' | 'ingredients' | 'instructions' | 'notes' | null = null;
 
   for (const line of lines) {
+    if (!line) continue;
+
     const lowerLine = line.toLowerCase();
 
     if (lowerLine.startsWith("recipe name:")) {
@@ -129,7 +146,7 @@ function parseAIRecipeText(
     }
     if (lowerLine.startsWith("cuisine:")) {
       recipe.cuisine = line.substring("cuisine:".length).trim();
-      if(recipe.cuisine) recipe.tags?.push(recipe.cuisine.toLowerCase());
+      if(recipe.cuisine && recipe.tags) recipe.tags.push(recipe.cuisine.toLowerCase());
       currentSection = null; continue;
     }
     if (lowerLine.startsWith("ingredients:")) {
@@ -143,41 +160,46 @@ function parseAIRecipeText(
       currentSection = 'notes'; continue;
     }
 
-    if (currentSection === 'description') recipe.description += ` ${line}`;
-    else if (currentSection === 'notes') recipe.notes += ` ${line}`;
-    else if (currentSection === 'ingredients' && (line.startsWith('-') || line.startsWith('*'))) {
+    if (currentSection === 'description') recipe.description = (recipe.description ? recipe.description + " " : "") + line;
+    else if (currentSection === 'notes') recipe.notes = (recipe.notes ? recipe.notes + " " : "") + line;
+    else if (currentSection === 'ingredients' && line.startsWith('-')) {
       const ingredientText = line.substring(1).trim();
-      const parts = ingredientText.match(/^([\d./\s]+)?\s*([a-zA-Z\s\(\)]+)?\s+(.+)$/);
-      if (parts && parts[3]) {
-        recipe.ingredients!.push({
-          quantity: parts[1]?.trim() || "As needed",
-          unit: parts[2]?.trim() || undefined,
-          item: parts[3].trim(),
-        });
+      const parts = ingredientText.match(/^([\d./\s\S]+?)\s+(.+)$/);
+      if (parts && parts[1] && parts[2]) {
+        const qtyUnitMatch = parts[1].trim().match(/^([\d./-]+)\s*([a-zA-Zµ]+)?$/);
+        if (qtyUnitMatch) {
+            recipe.ingredients!.push({
+                quantity: qtyUnitMatch[1]?.trim() || "1",
+                unit: qtyUnitMatch[2]?.trim() || undefined,
+                item: parts[2].trim(),
+            });
+        } else {
+             recipe.ingredients!.push({ quantity: parts[1].trim(), item: parts[2].trim() });
+        }
       } else {
         recipe.ingredients!.push({ quantity: "As needed", item: ingredientText });
       }
-    } else if (currentSection === 'instructions' && /^\d+\./.test(line)) {
+    } else if (currentSection === 'instructions' && /^\d+\.\s*/.test(line)) {
       recipe.instructions!.push(line.replace(/^\d+\.\s*/, '').trim());
+    } else if (currentSection === 'instructions' && recipe.instructions!.length > 0 && line) {
+      recipe.instructions![recipe.instructions!.length - 1] += ` ${line}`;
     }
   }
 
-  if (promptData.dietaryRestrictions && promptData.dietaryRestrictions.length > 0) {
-    recipe.tags = [...(recipe.tags || []), ...promptData.dietaryRestrictions.map(d => d.toLowerCase())];
+  if (promptData.dietaryRestrictions && promptData.dietaryRestrictions.length > 0 && recipe.tags) {
+    recipe.tags = [...recipe.tags, ...promptData.dietaryRestrictions.map(d => d.toLowerCase())];
   }
-  if (promptData.mealType) {
-    recipe.tags?.push(promptData.mealType.toLowerCase());
+  if (promptData.mealType && recipe.tags) {
+    recipe.tags.push(promptData.mealType.toLowerCase());
   }
   if (recipe.tags) {
-    recipe.tags = [...new Set(recipe.tags)];
+    recipe.tags = [...new Set(recipe.tags.filter(tag => tag))];
   }
 
-
-  if (!recipe.name && recipe.description) {
-    recipe.name = recipe.description.split('.')[0].substring(0, 50) + " (AI Generated)";
-  } else if (!recipe.name) {
-    recipe.name = "AI Generated Recipe";
+  if (recipe.name === "AI Generated Recipe (Parsing Pending)" && recipe.description) {
+    recipe.name = recipe.description.split('.')[0].substring(0, 60) + "...";
   }
+  if (!recipe.name) recipe.name = "Untitled AI Recipe";
 
 
   return recipe;
@@ -185,13 +207,13 @@ function parseAIRecipeText(
 
 export async function POST(request: Request) {
   const session = await getServerSession(authOptions);
-  if (!session || !session.user || !('id' in session.user) || typeof (session.user as any).id !== 'string') {
+  if (!session || !session.user?.id) {
     return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
   }
 
   if (!process.env.OPENAI_API_KEY) {
-    console.error("OpenAI API key is not configured.");
-    return NextResponse.json({ message: 'AI service is not configured by the administrator.' }, { status: 503 });
+    console.error("OpenAI API key is not configured in .env.local");
+    return NextResponse.json({ message: 'AI service is not configured.' }, { status: 503 });
   }
 
   try {
@@ -211,55 +233,44 @@ export async function POST(request: Request) {
     }
 
     const promptData: PromptData = {
-      ingredients: ingredients.filter((i: unknown): i is string => typeof i === 'string' && i.trim() !== ''),
-      dietaryRestrictions: Array.isArray(dietaryRestrictions) ? dietaryRestrictions.filter((d: unknown): d is string => typeof d === 'string') : [],
-      cuisine: typeof cuisine === 'string' ? cuisine : undefined,
-      skillLevel: typeof skillLevel === 'string' ? skillLevel : undefined,
-      mealType: typeof mealType === 'string' ? mealType : undefined,
-      specificRequests: typeof specificRequests === 'string' ? specificRequests : undefined,
+      ingredients: ingredients.filter((i: any) => typeof i === 'string' && i.trim() !== ''),
+      dietaryRestrictions: Array.isArray(dietaryRestrictions) ? dietaryRestrictions.filter((d: any) => typeof d === 'string') : [],
+      cuisine: typeof cuisine === 'string' && cuisine.trim() !== '' ? cuisine : undefined,
+      skillLevel: typeof skillLevel === 'string' && skillLevel.trim() !== '' ? skillLevel : undefined,
+      mealType: typeof mealType === 'string' && mealType.trim() !== '' ? mealType : undefined,
+      specificRequests: typeof specificRequests === 'string' && specificRequests.trim() !== '' ? specificRequests : undefined,
     };
 
     const aiResponseText = await callOpenAIService(promptData);
     const parsedRecipeData = parseAIRecipeText(aiResponseText, promptData);
 
-    if (!session.user || typeof (session.user as { id?: unknown }).id !== 'string') {
-      return NextResponse.json({ message: 'Invalid user ID' }, { status: 400 });
-    }
-
-    const userId = (session.user as any).id;
-    if (typeof userId !== 'string') {
-      return NextResponse.json({ message: 'Invalid user ID' }, { status: 400 });
-    }
-
     const newRecipe = new RecipeModel({
       ...parsedRecipeData,
-      userId: new mongoose.Types.ObjectId(userId),
+      userId: new mongoose.Types.ObjectId(session.user.id),
     });
 
     const savedRecipe = await newRecipe.save();
 
     return NextResponse.json({ recipe: savedRecipe, rawAIResponse: aiResponseText }, { status: 200 });
 
-  } catch (error: unknown) {
-    console.error('AI Recipe Generation or Saving Error:', error);
-    let errorMessage = 'Failed to generate or save recipe due to an internal error.';
+  } catch (error: any) {
+    console.error('API Route - AI Recipe Generation Error:', error.message);
+    let errorMessage = 'Failed to generate or save recipe.';
     let statusCode = 500;
 
-    if (typeof error === 'object' && error !== null && 'message' in error && typeof (error as { message?: unknown }).message === 'string') {
-      const message = ((error as { message?: string }).message || '').toLowerCase();
-      if (message.includes('quota')) {
-        errorMessage = 'AI service quota may have been exceeded. Please try again later.';
+    if (error.message?.toLowerCase().includes('quota')) {
+        errorMessage = 'AI service quota may have been exceeded. Please check your OpenAI plan and billing details.';
         statusCode = 429;
-      } else if (message.includes('api key')) {
-        errorMessage = 'AI service authentication failed. Please check server configuration.';
-      }
+    } else if (error.message?.toLowerCase().includes('api key') || (error instanceof OpenAI.AuthenticationError)) {
+        errorMessage = 'AI service authentication failed. Please check server configuration (API Key).';
+        statusCode = 500;
+    } else if (error instanceof OpenAI.APIError) {
+        errorMessage = `AI Service Error: ${error.name}`;
+        statusCode = error.status || 500;
+    } else if (error.message?.includes('Failed to get a response from AI service')) {
+        errorMessage = error.message;
     }
 
-    if (error instanceof OpenAI.APIError) {
-      errorMessage = `AI Service Error: ${error.name} - ${error.message}`;
-      statusCode = error.status || 500;
-    }
-
-    return NextResponse.json({ message: errorMessage, details: (error as { message?: string }).message }, { status: statusCode });
+    return NextResponse.json({ message: errorMessage}, { status: statusCode });
   }
 }

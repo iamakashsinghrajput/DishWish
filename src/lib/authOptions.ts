@@ -5,7 +5,6 @@ import CredentialsProvider from 'next-auth/providers/credentials';
 import dbConnect from '@/lib/db';
 import UserModel from '@/models/User';
 
-// Extend the default Session interface to include id, provider, emailVerified
 declare module 'next-auth' {
   interface Session {
     user: {
@@ -119,7 +118,7 @@ export const authOptions: NextAuthOptions = {
     },
   },
   pages: {
-    signIn: '/session/new', // Your custom login page
+    signIn: '/session/new',
   },
   secret: process.env.NEXTAUTH_SECRET,
 };
