@@ -76,7 +76,7 @@ async function callOpenAIService(promptData: PromptData): Promise<string> {
         { role: "user", content: userPrompt }
       ],
       temperature: 0.6,
-      // max_tokens: 1500,
+      max_tokens: 1500,
     });
 
     // console.log("OpenAI Raw Choice:", JSON.stringify(completion.choices[0], null, 2));
@@ -212,7 +212,7 @@ export async function POST(request: Request) {
   }
 
   if (!process.env.OPENAI_API_KEY) {
-    console.error("OpenAI API key is not configured in .env.local");
+    console.error("OpenAI API key is not configured in .env");
     return NextResponse.json({ message: 'AI service is not configured.' }, { status: 503 });
   }
 
