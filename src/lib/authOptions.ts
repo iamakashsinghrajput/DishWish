@@ -8,7 +8,6 @@ import UserModel, { IUser } from '../models/User';
 import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
 
-// Augment NextAuth types
 declare module 'next-auth' {
   interface Session {
     user: {
