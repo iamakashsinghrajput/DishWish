@@ -1,10 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
 import { NextResponse } from 'next/server';
 import { getServerSession } from "next-auth/next";
 import { authOptions } from '@/lib/authOptions';
 import dbConnect from '@/lib/db';
 import RecipeModel, { IRecipe } from '@/models/Recipe';
-import mongoose from 'mongoose';
+import { Types } from 'mongoose';
 import OpenAI from 'openai';
 
 const openai = new OpenAI({
@@ -68,7 +69,6 @@ async function callOpenAIService(promptData: PromptData): Promise<string> {
   }
 
   try {
-    console.log("Sending request to OpenAI with model gpt-4o-mini...");
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
@@ -76,27 +76,18 @@ async function callOpenAIService(promptData: PromptData): Promise<string> {
         { role: "user", content: userPrompt }
       ],
       temperature: 0.6,
-      max_tokens: 1500,
     });
-
-    // console.log("OpenAI Raw Choice:", JSON.stringify(completion.choices[0], null, 2));
-
 
     const aiResponse = completion.choices[0]?.message?.content;
 
     if (!aiResponse) {
-      console.error("OpenAI response content is null or undefined. Full completion:", JSON.stringify(completion, null, 2));
       throw new Error("AI did not return any recipe content.");
     }
     return aiResponse.trim();
   } catch (error: any) {
     console.error("Error calling OpenAI service:", error.message);
-    if (error.response) {
-        console.error("OpenAI API Error Response Data:", error.response.data);
-        console.error("OpenAI API Error Response Status:", error.response.status);
-    } else if (error instanceof OpenAI.APIError) {
+    if (error instanceof OpenAI.APIError) {
         console.error("OpenAI SDK APIError Status:", error.status);
-        console.error("OpenAI SDK APIError Headers:", error.headers);
         console.error("OpenAI SDK APIError Error Object:", error.error);
     }
     throw new Error(`Failed to get a response from AI service: ${error.message}`);
@@ -201,7 +192,6 @@ function parseAIRecipeText(
   }
   if (!recipe.name) recipe.name = "Untitled AI Recipe";
 
-
   return recipe;
 }
 
@@ -212,7 +202,7 @@ export async function POST(request: Request) {
   }
 
   if (!process.env.OPENAI_API_KEY) {
-    console.error("OpenAI API key is not configured in .env");
+    console.error("OpenAI API key is not configured in .env.local");
     return NextResponse.json({ message: 'AI service is not configured.' }, { status: 503 });
   }
 
@@ -244,9 +234,19 @@ export async function POST(request: Request) {
     const aiResponseText = await callOpenAIService(promptData);
     const parsedRecipeData = parseAIRecipeText(aiResponseText, promptData);
 
+    // **THE FIX IS HERE:**
+    // Ensure session.user.id is correctly converted to a Mongoose ObjectId
+    // Mongoose can often handle string conversion, but being explicit is safer.
+    // First, validate that session.user.id is a valid string for an ObjectId
+    if (!session.user.id || !Types.ObjectId.isValid(session.user.id)) {
+        console.error("Invalid session user ID for recipe creation:", session.user.id);
+        return NextResponse.json({ message: 'Invalid user session data.' }, { status: 400 });
+    }
+    const userIdAsObjectId = new Types.ObjectId(session.user.id);
+
     const newRecipe = new RecipeModel({
       ...parsedRecipeData,
-      userId: new mongoose.Types.ObjectId(session.user.id),
+      userId: userIdAsObjectId, // Use the explicitly converted ObjectId
     });
 
     const savedRecipe = await newRecipe.save();
@@ -269,8 +269,17 @@ export async function POST(request: Request) {
         statusCode = error.status || 500;
     } else if (error.message?.includes('Failed to get a response from AI service')) {
         errorMessage = error.message;
+    } else if (error.name === 'ValidationError' || error.message?.includes('validation failed')) { // Mongoose validation error
+        errorMessage = 'Recipe data validation failed. Please check the generated content.';
+        statusCode = 400;
+        console.error('Mongoose Validation Error details:', error.errors || error);
+    } else if (error.message?.includes("input must be a 24 character hex string")) { // Specific error message
+        errorMessage = "There was an issue with associating the recipe with your user account. Please try again.";
+        statusCode = 500; // Internal server error, likely a bug in how ID is handled
+        console.error("ObjectId conversion issue suspect. Original error:", error);
     }
 
-    return NextResponse.json({ message: errorMessage}, { status: statusCode });
+
+    return NextResponse.json({ message: errorMessage }, { status: statusCode });
   }
 }
