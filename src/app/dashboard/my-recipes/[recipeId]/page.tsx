@@ -24,9 +24,9 @@ interface Recipe {
 }
 
 async function fetchRecipeById(recipeId: string): Promise<Recipe | null> {
-  // const response = await fetch(`/api/recipes/${recipeId}`);
-  // if (!response.ok) return null;
-  // return response.json();
+  const response = await fetch(`/api/recipes/${recipeId}`);
+  if (!response.ok) return null;
+  return response.json();
 
   if (recipeId === "1") {
     return {
@@ -140,8 +140,8 @@ export default function RecipeDetailPage() {
 
   const toggleFavorite = async () => {
     if (!recipe) return;
-    // const newFavStatus = !recipe.isFavorite;
-    // await fetch(`/api/recipes/${recipe.id}/favorite`, { method: 'PUT', body: JSON.stringify({ isFavorite: newFavStatus }) });
+    const newFavStatus = !recipe.isFavorite;
+    await fetch(`/api/recipes/${recipe.id}/favorite`, { method: 'PUT', body: JSON.stringify({ isFavorite: newFavStatus }) });
     setRecipe({ ...recipe, isFavorite: !recipe.isFavorite });
   };
 
