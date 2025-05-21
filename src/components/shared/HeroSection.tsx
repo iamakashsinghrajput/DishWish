@@ -25,7 +25,7 @@ const HeroSection = () => {
             <div className="inline-flex items-center bg-orange-100 text-orange-700 text-sm font-semibold px-4 py-2 rounded-full mb-6 shadow-sm">
               <SparklesIcon className="h-5 w-5 mr-2 text-orange-500" />AI-Powered Culinary Magic!
             </div>
-            <h1 className="text-4xl sm:text-5xl lg:text-[3.4rem] xl:text-6xl font-extrabold text-slate-800 tracking-tight leading-tight">Craft Your Next <br className="hidden sm:block lg:hidden" /><span className="text-orange-600">Delicious Meal</span><br className="hidden sm:block lg:hidden" /> With AI Precision</h1>
+            <h1 className="text-4xl sm:text-5xl lg:text-[3.4rem] xl:text-6xl font-extrabold text-slate-800 tracking-tight leading-tight">Craft Your Next <br className="hidden sm:block lg:hidden" /><span className="text-orange-800">Delicious Meal</span><br className="hidden sm:block lg:hidden" /> With AI Precision</h1>
             <p className="mt-6 text-lg text-slate-600 max-w-xl mx-auto lg:mx-0">DishWish AI transforms your ingredients and preferences into unique, easy-to-follow recipes. Explore a world of flavor, personalized just for you.</p>
             <div className="mt-10 flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-4">
               <button onClick={handleGenerateRecipeClick} className="w-full sm:w-auto bg-orange-600 text-white px-8 py-3.5 rounded-lg text-base font-semibold shadow-md hover:bg-orange-700 transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2">
